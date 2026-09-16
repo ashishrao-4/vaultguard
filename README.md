@@ -1,71 +1,107 @@
-# Vaultguard
-
-> Your Obsidian vault, guarded for your AI agents.
-
-Agents (opencode, Claude Code, Cursor) get secrets **by name** through [MCP](https://modelcontextprotocol.io) — they never see the values. You keep ownership of your secrets inside the vault you already think in.
-
-```
-vaultguard add DB_URL            →  rotate it once a quarter, agents pick it up automatically
-   │
-   ▼
- ┌────────────────────┐   encrypted in Obsidian    ┌────────────────────┐
- │   Obsidian vault   │  ⇄  AES-256-GCM blocks     │   your agent       │
- │   Secrets.md        │  list/add via vaultguard  │   (opencode /      │
- └────────────────────┘                            │    Claude / Cursor)│
-                     ▲                             │                    │
-                     └─────────  MCP tools ────────┤  only sees names   │
-                              list_secrets         │  and runs commands  │
-                              get_secret           │  with values from    │
-                              run_with_secret      │  the environment     │
-                                                   └────────────────────┘
-```
-
-- Works in the Obsidian app itself — reveal a secret with one click.
-- Zero npm dependencies. Pure Node. Cross-platform (Windows / macOS / Linux).
-- Secrets are encrypted with **AES-256-GCM**, keyed from your passphrase via **PBKDF2-SHA-256 (250k iterations)** — byte-for-byte compatible with the [Inline Secret Block](https://github.com/vnrtmnv/obsidian-inline-secret-block) plugin.
+<p align="center">
+  <strong><code>🔐 vaultguard</code></strong><br/>
+  <em>Your Obsidian vault, guarded for your AI agents.</em><br/><br/>
+  <code>npx vaultguard init</code> · zero dependencies · pure Node · cross-platform
+</p>
 
 ---
 
-## Quickstart (5 minutes)
+## The problem
 
-### 1. Install
+Your AI agents are powerful. They ship code, run commands, and one day they will ask: *"give me the database URL."*
+
+You hand it over. Now that value lives in every transcript, log, checkpoint, and backup of your conversations. Rotate it a month later — a year later — and the old one is still out there.
+
+**The vault itself** — Obsidian — is encrypted only if you make it so, and your agent reading your notes means your agent reading your secrets.
+
+## What vaultguard does
+
+Secrets live in **your** Obsidian vault as AES-256-GCM ciphertext. Your agents get them **by name** over MCP — they run commands with the values injected into the environment and **never see them**, while every access is **audited**.
+
+```
+┌────────────────────────┐        ┌─────────────────────────────┐
+│    Obsidian vault       │        │         your agent          │
+│                        │        │   (opencode · Claude · …   │
+│  Secrets.md            │        │   Cursor)                   │
+│  │  ```secret-lock     │        │                             │
+│  │    DB_URL           │  ◀─────│  list_secrets  → names only  │
+│  │    AgH8qQc5…        │  MCP   │                             │
+│  │  ```                │        │  run_with_secret            │
+│  │                      │        │    → env: DB_URL=…          │
+│  │  encrypted blocks    │        │    → output redacted        │
+│  └──────────────────────┘        └─────────────────────────────┘
+        ▲                                    ▲
+        │  you: vaultguard add DB_URL        │  every call → audit.jsonl
+        │       (or just click "Show"        │  + allowlist/approval gates
+        │        in Obsidian!)               │
+        └────────────────────────────────────┘
+```
+
+- **You own the data.** No cloud, no SaaS, no server. The encrypted blocks are plain markdown.
+- **Readable in Obsidian.** Encrypted blocks look like notes; reveal them with one click.
+- **Tell your agent to run things** using secrets — values never surface in transcripts.
+- **Zero npm dependencies.** Pure Node ≥ 18. Windows / macOS / Linux.
+
+---
+
+## Quickstart
+
+### 1 · Install
 
 ```bash
 npm install -g vaultguard
 ```
 
-### 2. Point it at your vault
+### 2 · Point it at your vault
 
 ```bash
 vaultguard init --vault "C:\Users\you\Documents\Obsidian Vault"
 ```
 
-It will:
-- ask for a **passphrase** (this encrypts/decrypts *every* secret in the vault),
-- create `Secrets.md` in your vault,
-- install the **Inline Secret Block** Obsidian plugin automatically (restart Obsidian and enable it under Settings → Community plugins),
-- save `~/.vaultguard/config.json` with your vault path and passphrase.
+It asks for a **passphrase** — the key that encrypts and decrypts *every* block in this vault.
+Then it:
 
-> **Security note:** the passphrase is stored in plaintext at `~/.vaultguard/config.json` by default. For stronger setups, leave it out and export it instead:
+- creates `Secrets.md` in your vault,
+- installs the **Inline Secret Block** plugin into the vault automatically,
+- writes `~/.vaultguard/config.json` (vault path, passphrase, security settings).
+
+> Restart Obsidian and enable the plugin: **Settings → Community plugins → Inline Secret Block → Enable**.
+
+### 3 · Add your first secret — the Obsidian way
+
+In **Obsidian**, open `Secrets.md` and add a plaintext block:
+
+````markdown
+```secret DATABASE-URL
+Mydatabaseurl@postgres
+```
+````
+
+Click **Show** — the plugin instantly replaces it with an encrypted `secret-lock` block. Your raw value is gone; what remains:
+
+````markdown
+```secret-lock DATABASE-URL
+Nx60U4Ph/+1CO+58Zr00HXhEW9GZ6voHlpS+bEXPpP69avbJaSfafZCC2dpPn6UgdMN+3PJUd+UPm39YAXhFTbHvLUpHDndzbODsL8fOm7IMWC16zjSQCW7CbRWklmUxOGl0lX2qpQ==
+```
+````
+
+That's it. Same value, later, forever: click **Show** again.
+
+> **No Obsidian? Use the CLI instead:**
 > ```bash
-> export VAULTGUARD_PASSPHRASE="your passphrase"
+> vaultguard add DB_URL     # hidden prompt
+> vaultguard set DB_URL     # rotate in place
 > ```
 
-### 3. Add your first secret
+### 4 · Connect your agent
 
 ```bash
-vaultguard add DB_URL
-# opens a hidden prompt → paste the value
+vaultguard mcp
 ```
 
-Now open `Secrets.md` in Obsidian — you'll see only an encrypted block with the name `DB_URL`. Click **Show** to reveal it. Edit the value whenever you want; agents always read the latest.
+prints ready-made config for your harness:
 
-### 4. Connect your agent
-
-Run `vaultguard mcp` and it prints ready-made config for your harness:
-
-**opencode** — add to `opencode.json` / `.opencode/opencode.json`:
-
+**opencode** — in `opencode.json` (or globally via the app):
 ```json
 {
   "mcp": {
@@ -78,81 +114,96 @@ Run `vaultguard mcp` and it prints ready-made config for your harness:
 ```
 
 **Claude Code:**
-
 ```bash
 claude mcp add vaultguard -- node C:/path/to/vaultguard/src/server.mjs
 ```
 
-**Cursor:** add the same entry under `"mcpServers"` in `.cursor/mcp.json`.
+**Cursor:** add the same server to your project's `.cursor/mcp.json` (or the *MCP* settings tab).
 
-### 5. Use it
+### 5 · Use it
 
-Ask your agent to "use the `DB_URL` secret". It calls `run_with_secret`, which runs the command with the value injected into the environment:
-
-```
+```text
+you : "run a quick sanity check against DB_URL"
 agent: run_with_secret(command: "psql $DB_URL -c 'SELECT 1'", secrets: ["DB_URL"])
-you:   ✔ exit 0
+you :  ✔ exit 0  ·  audit entry written  ·  no secret leaked
 ```
 
-- Secret **values never appear** in the agent's output (they're redacted).
-- `get_secret` exists for tools that insist on a value — use it sparingly.
-
----
-
-## Commands
-
-| Command | What it does |
-|---|---|
-| `vaultguard init` | Configure vault path + passphrase, create `Secrets.md`, install plugin |
-| `vaultguard add <NAME>` | Encrypt + store a new secret, interactively |
-| `vaultguard set <NAME>` | Rotate a secret in place |
-| `vaultguard list` | List secret names (no values) |
-| `vaultguard mcp` | Print MCP config snippets for your harness |
-| `vaultguard info` | Show current config state |
-| `vaultguard test` | Run a crypto self-test |
-
-## Environment variables
-
-| Variable | Purpose |
-|---|---|
-| `VAULTGUARD_VAULT_PATH` / `VAULT_PATH` | Vault folder (overrides config) |
-| `VAULTGUARD_PASSPHRASE` / `DOORMAN_PASSPHRASE` | Passphrase (overrides config) |
-| `VAULTGUARD_HOME` | Config dir, defaults to `~/.vaultguard` |
-| `VAULTGUARD_NO_APPROVAL=1` | Server auto-approves `run_with_secret` (not recommended) |
+- `run_with_secret` — secrets injected into the command's environment only.
+- Output is scrubbed — any accidental echo of a secret is replaced with `[REDACTED:NAME]`.
+- `get_secret` — decrypts a value for tools that insist; use sparingly.
 
 ---
 
 ## Security model
 
-- **At rest:** secrets live in your Obsidian vault as AES-256-GCM ciphertext. Nothing is readable without the passphrase (PBKDF2-SHA-256, 250k iterations, random salt + IV per secret).
-- **In transit to agents:** secrets are injected into the child process *environment* only; MCP responses are redacted.
-- **You own everything:** no cloud, no server, no SaaS. The `Secrets.md` file is *your* file — back it up, sync it, put it anywhere Obsidian works.
-- **Known limits (roadmap):** `run_with_secret` currently trusts the requesting agent; there is no per-host allowlist, audit log, or expiration yet. Any process running on your machine with MCP access to the server can execute commands with secret env vars. See below.
+| Layer | What stops it |
+|---|---|
+| **At rest** | AES-256-GCM, PBKDF2-SHA-256 (250,000 iterations, 16-byte salt, fresh 12-byte IV per value). Byte-compatible with the [Inline Secret Block](https://github.com/vnrtmnv/obsidian-inline-secret-block) plugin. |
+| **Approval gate** | `run_with_secret` is **denied by default** unless an admin sets `requireApproval: false` (or `VAULTGUARD_REQUIRE_APPROVAL=0`). |
+| **Host allowlist** | Only named clients (from MCP `clientInfo`) may call tools. Empty list = allow all. |
+| **Command allowlist** | Only command prefixes you list may run (e.g. `["psql", "node", "git"]`). Empty = allow all. |
+| **Audit log** | Every call — who (host), what, which secrets, outcome — appended to `~/.vaultguard/audit.jsonl`. View with `vaultguard audit`. |
+| **Output scrubbing** | Secret values and their first 8 chars are redacted from command output. |
 
-## Roadmap / hardening
+### Configuration
 
-- [ ] Output scrubbing hardened (admin-provided allowlists)
-- [ ] Host allowlist (only approved agent processes may call tools)
-- [ ] Audit log (`Audit.md` in the vault / `audit.jsonl`)
-- [ ] `npx vaultguard init` one-liner for non-global installs
-- [ ] Approval gates for `run_with_secret` by default
-- [ ] Secret rotation reminders / expiry hints
+Edit `~/.vaultguard/config.json`:
+
+```jsonc
+{
+  "vaultPath": "C:/Users/you/Documents/Obsidian Vault",
+  "passphrase": "…",                 // fallback only — prefer the env var
+  "allowlist": { "hosts": [], "commands": ["psql", "node"] },
+  "requireApproval": false,          // true (default) = gate run_with_secret
+  "audit": true
+}
+```
+
+| Env var | Overrides |
+|---|---|
+| `VAULTGUARD_VAULT_PATH` / `VAULT_PATH` | vault path |
+| `VAULTGUARD_PASSPHRASE` / `DOORMAN_PASSPHRASE` | passphrase |
+| `VAULTGUARD_HOME` | config dir (default `~/.vaultguard`) |
+| `VAULTGUARD_REQUIRE_APPROVAL=0` | auto-approve |
+| `VAULTGUARD_AUDIT=0` | disable audit |
+
+> **Passphrase hygiene:** you can keep it out of the config file entirely and export it in your shell / harness environment instead. Protect `~/.vaultguard` like you would an SSH key.
 
 ---
 
-## How the encryption works
+## CLI reference
 
-`vaultguard` speaks the exact wire format of the **Inline Secret Block** Obsidian plugin, so encrypted blocks are interchangeable:
+| Command | What it does |
+|---|---|
+| `vaultguard init` | Configure vault + passphrase, create `Secrets.md`, install plugin |
+| `vaultguard add <NAME>` | Encrypt + store a new secret (interactive or `--value`) |
+| `vaultguard set <NAME>` | Rotate a secret in place |
+| `vaultguard list` | List secret names (no values) |
+| `vaultguard audit [--lines n]` | Tail the audit log |
+| `vaultguard mcp` | Print harness-specific MCP config |
+| `vaultguard info` | Show config + security posture |
+| `vaultguard test` | Crypto self-test |
 
-```
-payload  = base64( salt ‖ iv ‖ ciphertext ‖ authTag )
-salt     = 16 bytes, fresh per secret
-iv       = 12 bytes (AES-GCM nonce), fresh per secret
-key      = PBKDF2-SHA-256(passphrase, salt, 250_000, 32)
-```
+---
+
+## FAQ
+
+**Is my vault git-safe?** The encrypted blocks are plain markdown — safe to commit, sync, or put anywhere Obsidian works. Never commit `~/.vaultguard/config.json`.
+
+**What if I forget the passphrase?** The blocks are AES-256-GCM. It cannot be recovered — that's the point.
+
+**Which Obsidian plugin?** [Inline Secret Block](https://github.com/vnrtmnv/obsidian-inline-secret-block) — `vaultguard init` installs it for you.
+
+**Do I need a server?** No. It's a local stdio MCP server (`node src/server.mjs`). Nothing listens on a port.
 
 ---
 
 ## License
 
-MIT © vaultguard contributors
+MIT © vaultguard contributors.
+
+The bundle installs the [Inline Secret Block](https://github.com/vnrtmnv/obsidian-inline-secret-block) plugin (also MIT), downloaded at `init` time from the plugin's official releases — it is **not** vendored into this package. This project uses Node.js built-ins only (`crypto`), so there are no dependency licenses to track.
+
+---
+
+*Guard your vault. Let your agents work.*

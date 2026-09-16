@@ -1,0 +1,80 @@
+import { homedir, platform } from 'node:os';
+import { join, dirname } from 'node:path';
+import { readFile, writeFile, mkdir, chmod } from 'node:fs/promises';
+
+export const SECRETS_FILE_NAME = 'Secrets.md';
+export const PLUGIN_ID = 'inline-secret-block';
+
+export function configDir() {
+  if (process.env.VAULTGUARD_HOME) return process.env.VAULTGUARD_HOME;
+  return join(homedir(), '.vaultguard');
+}
+
+export function configPath() {
+  return join(configDir(), 'config.json');
+}
+
+export function defaultVaultPath() {
+  if (platform() === 'win32') {
+    return join(homedir(), 'Documents', 'Obsidian Vault');
+  }
+  if (platform() === 'darwin') {
+    return join(homedir(), 'Documents', 'Obsidian Vault');
+  }
+  return '';
+}
+
+export async function loadConfig() {
+  try {
+    const raw = await readFile(configPath(), 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+export async function saveConfig(cfg) {
+  await mkdir(configDir(), { recursive: true });
+  await writeFile(configPath(), JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+  try {
+    await chmod(configPath(), 0o600);
+  } catch {
+    // Windows ignores POSIX modes; best effort.
+  }
+}
+
+/**
+ * Resolve effective settings: explicit CLI > env > config file > defaults.
+ * Accepts a map of explicit values (from CLI flags).
+ */
+export async function resolveSettings(explicit = {}) {
+  const cfg = await loadConfig();
+
+  const vaultPath =
+    explicit.vaultPath ??
+    process.env.VAULTGUARD_VAULT_PATH ??
+    process.env.VAULT_PATH ??
+    cfg.vaultPath ??
+    '';
+
+  const passphrase =
+    explicit.passphrase ??
+    process.env.VAULTGUARD_PASSPHRASE ??
+    process.env.DOORMAN_PASSPHRASE ??
+    cfg.passphrase ??
+    '';
+
+  return { vaultPath, passphrase, secretsFile: explicit.secretsFile ?? SECRETS_FILE_NAME };
+}
+
+export function secretsFilePath(vaultPath) {
+  return join(vaultPath, SECRETS_FILE_NAME);
+}
+
+export function pluginInstallPath(vaultPath) {
+  return join(vaultPath, '.obsidian', 'plugins', PLUGIN_ID);
+}
+
+export function vaultLabel(vaultPath) {
+  return dirname(vaultPath).length > 0 ? vaultPath : '(unset)';
+}

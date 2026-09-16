@@ -1,0 +1,31 @@
+{
+  "name": "vaultguard",
+  "version": "0.1.0",
+  "description": "Your Obsidian vault, guarded for your AI agents. Agents use secrets by name via MCP — they never see the values.",
+  "type": "module",
+  "bin": {
+    "vaultguard": "bin/vaultguard.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "obsidian",
+    "mcp",
+    "model-context-protocol",
+    "secrets",
+    "vault",
+    "ai-agents",
+    "claude",
+    "opencode",
+    "cursor",
+    "security"
+  ],
+  "license": "MIT"
+}

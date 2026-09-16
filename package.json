@@ -27,5 +27,13 @@
     "cursor",
     "security"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "homepage": "https://github.com/ashishrao-4/vaultguard",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ashishrao-4/vaultguard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ashishrao-4/vaultguard/issues"
+  }
 }

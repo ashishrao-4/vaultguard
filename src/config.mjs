@@ -5,6 +5,75 @@ import { readFile, writeFile, mkdir, chmod } from 'node:fs/promises';
 export const SECRETS_FILE_NAME = 'Secrets.md';
 export const PLUGIN_ID = 'inline-secret-block';
 
+export function securityDefaults() {
+  return { allowlist: { hosts: [], commands: [] }, requireApproval: true, audit: true };
+}
+
+function boolFromEnv(...keys) {
+  for (const k of keys) {
+    if (k in process.env) {
+      const v = String(process.env[k]).toLowerCase();
+      return v === '1' || v === 'true' || v === 'yes';
+    }
+  }
+  return undefined;
+}
+
+export async function loadConfig() {
+  try {
+    const raw = await readFile(configPath(), 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Resolve effective settings: explicit CLI > env > config file > defaults.
+ * Accepts a map of explicit values (from CLI flags).
+ */
+export async function resolveSettings(explicit = {}) {
+  const cfg = await loadConfig();
+  const sec = securityDefaults();
+
+  const vaultPath =
+    explicit.vaultPath ??
+    process.env.VAULTGUARD_VAULT_PATH ??
+    process.env.VAULT_PATH ??
+    cfg.vaultPath ??
+    '';
+
+  const passphrase =
+    explicit.passphrase ??
+    process.env.VAULTGUARD_PASSPHRASE ??
+    process.env.DOORMAN_PASSPHRASE ??
+    cfg.passphrase ??
+    '';
+
+  const allowedHosts =
+    explicit.allowedHosts ?? cfg.allowlist?.hosts ?? sec.allowlist.hosts;
+  const allowedCommands =
+    explicit.allowedCommands ?? cfg.allowlist?.commands ?? sec.allowlist.commands;
+
+  const requireApproval =
+    explicit.requireApproval ??
+    boolFromEnv('VAULTGUARD_REQUIRE_APPROVAL') ??
+    cfg.requireApproval ??
+    sec.requireApproval;
+
+  const audit =
+    explicit.audit ?? boolFromEnv('VAULTGUARD_AUDIT') ?? cfg.audit ?? sec.audit;
+
+  return {
+    vaultPath,
+    passphrase,
+    secretsFile: explicit.secretsFile ?? SECRETS_FILE_NAME,
+    allowlist: { hosts: allowedHosts, commands: allowedCommands },
+    requireApproval,
+    audit,
+  };
+}
+
 export function configDir() {
   if (process.env.VAULTGUARD_HOME) return process.env.VAULTGUARD_HOME;
   return join(homedir(), '.vaultguard');
@@ -24,15 +93,6 @@ export function defaultVaultPath() {
   return '';
 }
 
-export async function loadConfig() {
-  try {
-    const raw = await readFile(configPath(), 'utf8');
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
 export async function saveConfig(cfg) {
   await mkdir(configDir(), { recursive: true });
   await writeFile(configPath(), JSON.stringify(cfg, null, 2) + '\n', 'utf8');
@@ -41,30 +101,6 @@ export async function saveConfig(cfg) {
   } catch {
     // Windows ignores POSIX modes; best effort.
   }
-}
-
-/**
- * Resolve effective settings: explicit CLI > env > config file > defaults.
- * Accepts a map of explicit values (from CLI flags).
- */
-export async function resolveSettings(explicit = {}) {
-  const cfg = await loadConfig();
-
-  const vaultPath =
-    explicit.vaultPath ??
-    process.env.VAULTGUARD_VAULT_PATH ??
-    process.env.VAULT_PATH ??
-    cfg.vaultPath ??
-    '';
-
-  const passphrase =
-    explicit.passphrase ??
-    process.env.VAULTGUARD_PASSPHRASE ??
-    process.env.DOORMAN_PASSPHRASE ??
-    cfg.passphrase ??
-    '';
-
-  return { vaultPath, passphrase, secretsFile: explicit.secretsFile ?? SECRETS_FILE_NAME };
 }
 
 export function secretsFilePath(vaultPath) {

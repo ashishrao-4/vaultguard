@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { decrypt } from './crypto.mjs';
 import { resolveSettings, vaultLabel } from './config.mjs';
 import { readSecretsText, parseSecrets } from './vault.mjs';
+import { appendAudit } from './audit.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const TOOLS = [
@@ -45,17 +46,7 @@ const TOOLS = [
   },
 ];
 
-let settingsCache = null;
-async function getSettings() {
-  if (!settingsCache) settingsCache = await resolveSettings();
-  return settingsCache;
-}
-
-async function loadSecrets() {
-  const { vaultPath } = await getSettings();
-  const text = await readSecretsText(vaultPath);
-  return parseSecrets(text ?? '');
-}
+const runtime = { clientName: '' };
 
 function errorObject(message) {
   return { isError: true, content: [{ type: 'text', text: `Error: ${message}` }] };
@@ -65,26 +56,33 @@ function success(text) {
   return { content: [{ type: 'text', text }] };
 }
 
-let approveCountdown = 0;
-async function awaitApproval(label) {
-  if (process.env.VAULTGUARD_NO_APPROVAL === '1' || process.env.VAULTGUARD_NONSTOP) {
-    return true;
-  }
-  if (approveCountdown > 0) {
-    approveCountdown -= 1;
-    return true;
-  }
+function hostAllowed(clientName, settings) {
+  const hosts = settings.allowlist.hosts;
+  if (!hosts || hosts.length === 0) return true;
+  const n = (clientName || '').toLowerCase();
+  return hosts.some((h) => n.includes(String(h).toLowerCase()));
+}
+
+function commandAllowed(command, settings) {
+  const commands = settings.allowlist.commands;
+  if (!commands || commands.length === 0) return true;
+  return commands.some((c) =>
+    command.trim().toLowerCase().startsWith(String(c).toLowerCase()),
+  );
+}
+
+async function checkApproval(label, settings) {
+  if (process.env.VAULTGUARD_NO_APPROVAL === '1') return true;
+  if (!settings.requireApproval) return true;
   if (process.stdin.isTTY) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    await new Promise((resolve) => {
-      rl.question(`vaultguard: allow "${label}"? [y]es / [a]lways for this run / [n]o: `, (ans) => {
-        const a = ans.trim().toLowerCase();
-        if (a === 'a') approveCountdown = 50;
+    const answer = await new Promise((resolve) => {
+      rl.question(`vaultguard: allow "${label}"? [y/N]: `, (ans) => {
         rl.close();
-        resolve(a === 'y' || a === 'a');
+        resolve(ans.trim().toLowerCase() === 'y');
       });
     });
-    return true;
+    return answer;
   }
   return false;
 }
@@ -106,72 +104,6 @@ function runCommand(command, env) {
   });
 }
 
-async function handleToolsCall(params) {
-  const { name, arguments: args } = params;
-  const secrets = await loadSecrets();
-
-  switch (name) {
-    case 'list_secrets': {
-      const names = [...secrets.keys()];
-      return success(
-        (names.length ? names.join('\n') : '(no secrets yet)') +
-          `\n\n(${names.length} secret${names.length === 1 ? '' : 's'})`,
-      );
-    }
-
-    case 'get_secret': {
-      const { name: secretName } = args;
-      if (!secrets.has(secretName)) {
-        return errorObject(`secret "${secretName}" not found. Run list_secrets to see available names.`);
-      }
-      const { passphrase } = await getSettings();
-      if (!passphrase) {
-        return errorObject('passphrase not configured. Set VAULTGUARD_PASSPHRASE or run "vaultguard init".');
-      }
-      try {
-        return success(decrypt(secrets.get(secretName), passphrase));
-      } catch (err) {
-        return errorObject(`failed to decrypt "${secretName}": ${err.message}`);
-      }
-    }
-
-    case 'run_with_secret': {
-      const { command, secrets: names } = args;
-      if (!Array.isArray(names) || names.length === 0) {
-        return errorObject('secrets: must provide at least one secret name.');
-      }
-      const { passphrase } = await getSettings();
-      if (!passphrase) {
-        return errorObject('passphrase not configured. Set VAULTGUARD_PASSPHRASE or run "vaultguard init".');
-      }
-      const env = { ...process.env };
-      for (const n of names) {
-        if (!secrets.has(n)) {
-          return errorObject(`secret "${n}" not found.`);
-        }
-        try {
-          env[n] = decrypt(secrets.get(n), passphrase);
-        } catch (err) {
-          return errorObject(`failed to decrypt "${n}": ${err.message}`);
-        }
-      }
-      const allowed = await awaitApproval(command);
-      if (!allowed) {
-        return errorObject('command rejected by user.');
-      }
-      const result = await runCommand(command, env);
-      const mergedErr = secretScrub(String(result.out) + String(result.err), env, names);
-      if (result.code === 0) {
-        return success(mergedErr || '(exit 0, no output)');
-      }
-      return errorObject(`exit ${result.code}${result.signal ? ` (${result.signal})` : ''}\n${mergedErr}`);
-    }
-
-    default:
-      return errorObject(`unknown tool "${name}"`);
-  }
-}
-
 function secretScrub(text, env, names) {
   for (const n of names) {
     const value = env[n];
@@ -184,19 +116,148 @@ function secretScrub(text, env, names) {
   return text;
 }
 
+async function settings() {
+  return resolveSettings();
+}
+
+async function audit(entry) {
+  const s = await settings();
+  if (!s.audit) return;
+  try {
+    await appendAudit({ host: runtime.clientName || 'unknown', ...entry });
+  } catch {
+    // Audit failures never break a request.
+  }
+}
+
+async function handleToolsCall(params, s) {
+  const { name, arguments: args } = params;
+  const secrets = await readSecretsText(s.vaultPath);
+  const parsed = parseSecrets(secrets ?? '');
+
+  let result;
+  switch (name) {
+    case 'list_secrets': {
+      const names = [...parsed.keys()];
+      result = success(
+        (names.length ? names.join('\n') : '(no secrets yet)') +
+          `\n\n(${names.length} secret${names.length === 1 ? '' : 's'})`,
+      );
+      await audit({ tool: 'list_secrets', outcome: 'ok' });
+      return result;
+    }
+
+    case 'get_secret': {
+      const { name: secretName } = args;
+      if (!parsed.has(secretName)) {
+        result = errorObject(`secret "${secretName}" not found. Run list_secrets to see available names.`);
+        await audit({ tool: 'get_secret', secret: secretName, outcome: 'error:not_found' });
+        return result;
+      }
+      if (!s.passphrase) {
+        result = errorObject('passphrase not configured. Set VAULTGUARD_PASSPHRASE or run "vaultguard init".');
+        await audit({ tool: 'get_secret', secret: secretName, outcome: 'error:no_passphrase' });
+        return result;
+      }
+      try {
+        result = success(decrypt(parsed.get(secretName), s.passphrase));
+        await audit({ tool: 'get_secret', secret: secretName, outcome: 'ok' });
+        return result;
+      } catch (err) {
+        result = errorObject(`failed to decrypt "${secretName}": ${err.message}`);
+        await audit({ tool: 'get_secret', secret: secretName, outcome: 'error:decrypt' });
+        return result;
+      }
+    }
+
+    case 'run_with_secret': {
+      const { command, secrets: names } = args;
+      if (!Array.isArray(names) || names.length === 0) {
+        result = errorObject('secrets: must provide at least one secret name.');
+        await audit({ tool: 'run_with_secret', secrets: names, outcome: 'error:no_secrets' });
+        return result;
+      }
+      if (!commandAllowed(command, s)) {
+        result = errorObject(
+          `command "${command}" is not allowlisted. Add it to allowlist.commands in ${'config'} or edit ~/.vaultguard/config.json.`,
+        );
+        await audit({ tool: 'run_with_secret', secrets: names, command, outcome: 'denied:command' });
+        return result;
+      }
+      for (const n of names) {
+        if (!parsed.has(n)) {
+          result = errorObject(`secret "${n}" not found.`);
+          await audit({ tool: 'run_with_secret', secrets: names, command, outcome: `error:not_found:${n}` });
+          return result;
+        }
+      }
+      if (!(await checkApproval(command, s))) {
+        result = errorObject(
+          'approval required. Set requireApproval=false in ~/.vaultguard/config.json (or VAULTGUARD_REQUIRE_APPROVAL=0) to auto-approve.',
+        );
+        await audit({ tool: 'run_with_secret', secrets: names, command, outcome: 'denied:approval' });
+        return result;
+      }
+      const env = { ...process.env };
+      for (const n of names) {
+        try {
+          env[n] = decrypt(parsed.get(n), s.passphrase);
+        } catch (err) {
+          result = errorObject(`failed to decrypt "${n}": ${err.message}`);
+          await audit({ tool: 'run_with_secret', secrets: names, command, outcome: 'error:decrypt' });
+          return result;
+        }
+      }
+      const r = await runCommand(command, env);
+      const merged = secretScrub(String(r.out) + String(r.err), env, names);
+      await audit({
+        tool: 'run_with_secret',
+        secrets: names,
+        command,
+        outcome: r.code === 0 ? 'ok' : `error:exit_${r.code}`,
+        exitCode: r.code,
+      });
+      if (r.code === 0) return success(merged || '(exit 0, no output)');
+      return errorObject(`exit ${r.code}${r.signal ? ` (${r.signal})` : ''}\n${merged}`);
+    }
+
+    default:
+      result = errorObject(`unknown tool "${name}"`);
+      await audit({ tool: name, outcome: 'error:unknown_tool' });
+      return result;
+  }
+}
+
 const sink = {
   handleRequest: async (request) => {
     const ctx = { jsonrpc: '2.0', id: request.id };
     try {
       switch (request.method) {
-        case 'initialize':
+        case 'initialize': {
+          const client = request.params?.clientInfo || {};
+          runtime.clientName = client.name || '';
+          await audit({ tool: 'initialize', outcome: 'ok', client: runtime.clientName });
           return { ...ctx, result: { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: { name: 'vaultguard', version: '0.1.0' } } };
+        }
         case 'notifications/initialized':
           return null;
-        case 'tools/list':
+        case 'tools/list': {
+          const s = await settings();
+          if (!hostAllowed(runtime.clientName, s)) {
+            await audit({ tool: 'tools/list', outcome: 'denied:host' });
+            return { ...ctx, error: { code: -32000, message: `host "${runtime.clientName || 'unknown'}" not allowed` } };
+          }
+          await audit({ tool: 'tools/list', outcome: 'ok' });
           return { ...ctx, result: { tools: TOOLS } };
-        case 'tools/call':
-          return { ...ctx, result: await handleToolsCall(request.params) };
+        }
+        case 'tools/call': {
+          const s = await settings();
+          if (!hostAllowed(runtime.clientName, s)) {
+            await audit({ tool: request.params?.name || '?', outcome: 'denied:host' });
+            return { ...ctx, error: { code: -32000, message: `host "${runtime.clientName || 'unknown'}" not allowed` } };
+          }
+          return { ...ctx, result: await handleToolsCall(request.params, s) };
+        }
         case 'ping':
           return { ...ctx, result: {} };
         default:
@@ -209,8 +270,10 @@ const sink = {
 };
 
 async function start() {
-  const settings = await getSettings();
-  process.stderr.write(`vaultguard MCP server ready • vault: ${vaultLabel(settings.vaultPath || '(unset)')}\n`);
+  const s = await settings();
+  process.stderr.write(
+    `vaultguard MCP server ready • vault: ${vaultLabel(s.vaultPath || '(unset)')} • approval: ${s.requireApproval ? 'required' : 'auto'} • audit: ${s.audit ? 'on' : 'off'}\n`,
+  );
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   rl.on('line', async (line) => {
     if (!line.trim()) return;

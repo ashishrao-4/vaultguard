@@ -13,6 +13,7 @@ import {
   configPath,
   secretsFilePath,
   SECRETS_FILE_NAME,
+  securityDefaults,
   vaultLabel,
 } from '../src/config.mjs';
 import { selfTest } from '../src/crypto.mjs';
@@ -24,6 +25,7 @@ import {
   rotateSecret,
 } from '../src/vault.mjs';
 import { installPlugin, isPluginInstalled } from '../src/plugin-install.mjs';
+import { readAudit, auditFilePath } from '../src/audit.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VERSION = '0.1.0';
@@ -117,7 +119,7 @@ async function cmdInit({ flags }) {
     passphrase = await prompt('Passphrase must not be empty. Enter one:', true);
   }
 
-  await saveConfig({ vaultPath, passphrase, secretsFile: SECRETS_FILE_NAME });
+  await saveConfig({ vaultPath, passphrase, secretsFile: SECRETS_FILE_NAME, ...securityDefaults() });
 
   const { created } = await ensureSecretsFile(vaultPath);
   const pluginResult = await installPlugin(vaultPath, { skip: flags['skip-plugin'] });
@@ -234,7 +236,26 @@ async function cmdInfo() {
     `vault: ${settings.vaultPath || '(unset)'}`,
     `passphrase: ${settings.passphrase ? 'set' : '(unset)'}`,
     `obsidian plugin: ${plugin ? 'installed' : settings.vaultPath && existsSync(settings.vaultPath) ? 'NOT installed' : 'n/a'}`,
+    `approval: ${settings.requireApproval ? 'required for run_with_secret' : 'auto-approve (VAULTGUARD_REQUIRE_APPROVAL=0)'}`,
+    `audit log: ${settings.audit ? `on → ${auditFilePath()}` : 'off'}`,
+    `allowed hosts: ${settings.allowlist.hosts.length ? settings.allowlist.hosts.join(', ') : '(all)'}`,
+    `allowed commands: ${settings.allowlist.commands.length ? settings.allowlist.commands.join(', ') : '(all)'}`,
   ]);
+}
+
+async function cmdAudit({ flags }) {
+  const entries = await readAudit(Number(flags.lines) || 50);
+  if (entries.length === 0) {
+    console.log('(audit log is empty)');
+    return;
+  }
+  for (const e of entries) {
+    const tool = e.tool || e.raw || '?';
+    const outcome = e.outcome ?? '';
+    const detail = e.secret ? ` secret=${e.secret}` : e.secrets ? ` secrets=${e.secrets.join(',')}` : '';
+    const cmd = e.command ? ` cmd="${e.command.slice(0, 60)}"` : '';
+    console.log(`${e.ts ?? '-'}  ${tool.padEnd(13)} ${String(outcome).padEnd(18)} host=${e.host ?? '-'}${detail}${cmd}`);
+  }
 }
 
 const COMMANDS = {
@@ -243,6 +264,7 @@ const COMMANDS = {
   set: cmdSet,
   list: cmdList,
   mcp: cmdMcp,
+  audit: cmdAudit,
   test: cmdTest,
   info: cmdInfo,
   help() {
@@ -254,6 +276,7 @@ const COMMANDS = {
         '  vaultguard add  <NAME> [--value <secret>]\n' +
         '  vaultguard set  <NAME> [--value <secret>]     # rotate in place\n' +
         '  vaultguard list\n' +
+        '  vaultguard audit [--lines <n>]                # tail the audit log\n' +
         '  vaultguard mcp                               # print MCP config snippets\n' +
         '  vaultguard info\n' +
         '  vaultguard test                              # crypto self-test\n' +
@@ -261,7 +284,15 @@ const COMMANDS = {
         'env:\n' +
         '  VAULTGUARD_VAULT_PATH, VAULT_PATH            vault folder\n' +
         '  VAULTGUARD_PASSPHRASE, DOORMAN_PASSPHRASE    passphrase\n' +
-        '  VAULTGUARD_HOME                              config dir (default ~/.vaultguard)\n',
+        '  VAULTGUARD_HOME                              config dir (default ~/.vaultguard)\n' +
+        '  VAULTGUARD_REQUIRE_APPROVAL=0                auto-approve run_with_secret\n' +
+        '  VAULTGUARD_AUDIT=0                           disable the audit log\n' +
+        '\n' +
+        'security (~/.vaultguard/config.json):\n' +
+        '  allowlist.hosts    client names allowed to talk to the server ([]) = all\n' +
+        '  allowlist.commands command prefixes allowed for run_with_secret ([]) = all\n' +
+        '  requireApproval    true: run_with_secret blocked unless approved "false"\n' +
+        '  audit              true: every tool call appended to audit.jsonl\n',
     );
   },
 };

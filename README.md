@@ -1,7 +1,7 @@
 <p align="center">
   <strong><code>🔐 vaultguard</code></strong><br/>
   <em>Your Obsidian vault, guarded for your AI agents.</em><br/><br/>
-  <code>npx vaultguard init</code> · zero dependencies · pure Node · cross-platform
+  <code>npx @ashishrao-4/vaultguard init</code> · zero dependencies · pure Node · cross-platform
 </p>
 
 ---
@@ -49,7 +49,7 @@ Secrets live in **your** Obsidian vault as AES-256-GCM ciphertext. Your agents g
 ### 1 · Install
 
 ```bash
-npm install -g vaultguard
+npm install -g @ashishrao-4/vaultguard
 ```
 
 ### 2 · Point it at your vault

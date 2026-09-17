@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="vaultguard" width="128"/><br/>
+  <img src="https://raw.githubusercontent.com/ashishrao-4/vaultguard/main/assets/logo.png" alt="vaultguard" width="128"/><br/>
   <strong><code>🔐 vaultguard</code></strong><br/>
   <em>Your Obsidian vault, guarded for your AI agents.</em><br/><br/>
   <code>npx @ashishrao-4/vaultguard init</code> · zero dependencies · pure Node · cross-platform

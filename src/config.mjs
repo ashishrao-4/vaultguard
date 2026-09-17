@@ -4,9 +4,15 @@ import { readFile, writeFile, mkdir, chmod } from 'node:fs/promises';
 
 export const SECRETS_FILE_NAME = 'Secrets.md';
 export const PLUGIN_ID = 'inline-secret-block';
+let warnedStalePassphrase = false;
 
 export function securityDefaults() {
-  return { allowlist: { hosts: [], commands: [] }, requireApproval: true, audit: true };
+  return {
+    allowlist: { hosts: [], commands: [] },
+    requireApproval: true,
+    audit: true,
+    allowGetSecret: false,
+  };
 }
 
 function boolFromEnv(...keys) {
@@ -43,12 +49,13 @@ export async function resolveSettings(explicit = {}) {
     cfg.vaultPath ??
     '';
 
+  // Passphrase comes from an explicit CLI value, env, or the config file
+  // ONLY when the user explicitly opted in via "storePassphraseOnDisk".
   const passphrase =
     explicit.passphrase ??
     process.env.VAULTGUARD_PASSPHRASE ??
     process.env.DOORMAN_PASSPHRASE ??
-    cfg.passphrase ??
-    '';
+    (cfg.storePassphraseOnDisk ? cfg.passphrase ?? '' : '');
 
   const allowedHosts =
     explicit.allowedHosts ?? cfg.allowlist?.hosts ?? sec.allowlist.hosts;
@@ -64,6 +71,22 @@ export async function resolveSettings(explicit = {}) {
   const audit =
     explicit.audit ?? boolFromEnv('VAULTGUARD_AUDIT') ?? cfg.audit ?? sec.audit;
 
+  const allowGetSecret =
+    explicit.allowGetSecret ??
+    boolFromEnv('VAULTGUARD_ALLOW_GET_SECRET') ??
+    cfg.allowGetSecret ??
+    sec.allowGetSecret;
+
+  if (cfg.passphrase && !cfg.storePassphraseOnDisk) {
+    if (!warnedStalePassphrase) {
+      warnedStalePassphrase = true;
+      process.stderr.write(
+        'vaultguard: warning — a passphrase was found in config.json but storePassphraseOnDisk is off;\n' +
+          'ignoring it. Set VAULTGUARD_PASSPHRASE, or re-init with --store-passphrase if you rely on that file.\n',
+      );
+    }
+  }
+
   return {
     vaultPath,
     passphrase,
@@ -71,6 +94,7 @@ export async function resolveSettings(explicit = {}) {
     allowlist: { hosts: allowedHosts, commands: allowedCommands },
     requireApproval,
     audit,
+    allowGetSecret,
   };
 }
 

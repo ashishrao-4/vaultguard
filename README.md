@@ -64,9 +64,13 @@ Then it:
 
 - creates `Secrets.md` in your vault,
 - installs the **Inline Secret Block** plugin into the vault automatically,
-- writes `~/.vaultguard/config.json` (vault path, passphrase, security settings).
+- writes `~/.vaultguard/config.json` — **without** the passphrase (you provide it via `VAULTGUARD_PASSPHRASE`).
 
 > Restart Obsidian and enable the plugin: **Settings → Community plugins → Inline Secret Block → Enable**.
+>
+> The passphrase is never written to disk by default. Prefer env vars:
+> `VAULTGUARD_PASSPHRASE` (or `DOORMAN_PASSPHRASE`). If you want it conveniently stored anyway —
+> at the cost of weaker security — run `vaultguard init --store-passphrase` instead (see Threat model).
 
 ### 3 · Add your first secret — the Obsidian way
 
@@ -108,7 +112,8 @@ prints ready-made config for your harness:
   "mcp": {
     "vaultguard": {
       "type": "local",
-      "command": ["node", "C:/path/to/vaultguard/src/server.mjs"]
+      "command": ["node", "C:/path/to/vaultguard/src/server.mjs"],
+      "environment": { "VAULTGUARD_PASSPHRASE": "your-passphrase" }
     }
   }
 }
@@ -116,10 +121,21 @@ prints ready-made config for your harness:
 
 **Claude Code:**
 ```bash
-claude mcp add vaultguard -- node C:/path/to/vaultguard/src/server.mjs
+claude mcp add vaultguard -e VAULTGUARD_PASSPHRASE=your-passphrase -- node C:/path/to/vaultguard/src/server.mjs
 ```
 
-**Cursor:** add the same server to your project's `.cursor/mcp.json` (or the *MCP* settings tab).
+**Cursor:** add the same server to your project's `.cursor/mcp.json` (or the *MCP* settings tab):
+```json
+{
+  "mcpServers": {
+    "vaultguard": {
+      "command": "node",
+      "args": ["C:/path/to/vaultguard/src/server.mjs"],
+      "env": { "VAULTGUARD_PASSPHRASE": "your-passphrase" }
+    }
+  }
+}
+```
 
 ### 5 · Use it
 
@@ -131,7 +147,7 @@ you :  ✔ exit 0  ·  audit entry written  ·  no secret leaked
 
 - `run_with_secret` — secrets injected into the command's environment only.
 - Output is scrubbed — any accidental echo of a secret is replaced with `[REDACTED:NAME]`.
-- `get_secret` — decrypts a value for tools that insist; use sparingly.
+- `get_secret` — **disabled by default** so values never reach the agent; opt in with `allowGetSecret: true` in the config if a tool insists on the raw value.
 
 ---
 
@@ -140,7 +156,8 @@ you :  ✔ exit 0  ·  audit entry written  ·  no secret leaked
 | Layer | What stops it |
 |---|---|
 | **At rest** | AES-256-GCM, PBKDF2-SHA-256 (250,000 iterations, 16-byte salt, fresh 12-byte IV per value). Byte-compatible with the [Inline Secret Block](https://github.com/vnrtmnv/obsidian-inline-secret-block) plugin. |
-| **Approval gate** | `run_with_secret` is **denied by default** unless an admin sets `requireApproval: false` (or `VAULTGUARD_REQUIRE_APPROVAL=0`). |
+| **Approval gate** | `run_with_secret` is **denied by default** unless you set `requireApproval: false` (or `VAULTGUARD_REQUIRE_APPROVAL=0`). |
+| **Secret access gate** | `get_secret` is **disabled by default** — values never reach the agent; enable only via `allowGetSecret: true`. The intended path is `run_with_secret` (env injection, values never seen). |
 | **Host allowlist** | Only named clients (from MCP `clientInfo`) may call tools. Empty list = allow all. |
 | **Command allowlist** | Only command prefixes you list may run (e.g. `["psql", "node", "git"]`). Empty = allow all. |
 | **Audit log** | Every call — who (host), what, which secrets, outcome — appended to `~/.vaultguard/audit.jsonl`. View with `vaultguard audit`. |
@@ -153,12 +170,17 @@ Edit `~/.vaultguard/config.json`:
 ```jsonc
 {
   "vaultPath": "C:/Users/you/Documents/Obsidian Vault",
-  "passphrase": "…",                 // fallback only — prefer the env var
+  // passphrase is NOT stored here by default — provide VAULTGUARD_PASSPHRASE instead
   "allowlist": { "hosts": [], "commands": ["psql", "node"] },
   "requireApproval": false,          // true (default) = gate run_with_secret
-  "audit": true
+  "audit": true,
+  "allowGetSecret": false            // false (default) = values never reach the agent
 }
 ```
+
+The **only** way the passphrase lands in this file is `vaultguard init --store-passphrase`,
+which sets `"storePassphraseOnDisk": true` and includes `"passphrase"`. Everything else reads
+the passphrase from the `VAULTGUARD_PASSPHRASE` env var or the CLI prompt.
 
 | Env var | Overrides |
 |---|---|
@@ -167,8 +189,12 @@ Edit `~/.vaultguard/config.json`:
 | `VAULTGUARD_HOME` | config dir (default `~/.vaultguard`) |
 | `VAULTGUARD_REQUIRE_APPROVAL=0` | auto-approve |
 | `VAULTGUARD_AUDIT=0` | disable audit |
+| `VAULTGUARD_ALLOW_GET_SECRET=1` | enable `get_secret` (default: off) |
 
-> **Passphrase hygiene:** you can keep it out of the config file entirely and export it in your shell / harness environment instead. Protect `~/.vaultguard` like you would an SSH key.
+> **Passphrase hygiene:** vaultguard never writes the passphrase to disk unless you opt in
+> (`init --store-passphrase`). Supply `VAULTGUARD_PASSPHRASE` in each harness config (see step 4)
+> and protect `~/.vaultguard` like an SSH key. Changed passphrase? `vaultguard rekey` re-encrypts
+> every block, then update the env var wherever you set it.
 
 ---
 
@@ -179,6 +205,7 @@ Edit `~/.vaultguard/config.json`:
 | `vaultguard init` | Configure vault + passphrase, create `Secrets.md`, install plugin |
 | `vaultguard add <NAME>` | Encrypt + store a new secret (interactive or `--value`) |
 | `vaultguard set <NAME>` | Rotate a secret in place |
+| `vaultguard rekey` | Re-encrypt every block with a new passphrase (interactive, or `--old-passphrase`/`--new-passphrase`) |
 | `vaultguard list` | List secret names (no values) |
 | `vaultguard audit [--lines n]` | Tail the audit log |
 | `vaultguard mcp` | Print harness-specific MCP config |
@@ -187,9 +214,40 @@ Edit `~/.vaultguard/config.json`:
 
 ---
 
+## Threat model — and when NOT to use it
+
+vaultguard is a thin convenience layer, **not a secrets manager**. Its job is to keep secret *values*
+out of your AI-agent transcripts, logs, and checkpoints.
+
+**What it does NOT protect against:**
+
+- **A compromised machine or harness.** The passphrase (or an opted-in stored config) lives on your
+  disk. Any process running as you — a backup tool, ransomware, a compromised plugin, your IDE — can
+  read your files and decrypt the vault.
+- **A hostile agent.** The entire idea is that the agent runs commands **with** secrets in the
+  environment. Treat that as "the agent is you." Start with command allowlists and review
+  `vaultguard audit`; don't grant access you wouldn't grant yourself.
+- **Weak passphrases.** AES-256-GCM + PBKDF2 is only as strong as the passphrase. Use a long random
+  one (your password manager can generate and store it).
+- **Exfiltration through legitimate channels.** A determined agent can copy ciphertext or raw values
+  anywhere that's reachable. vaultguard is a barrier, not a boundary.
+- **Plugin supply chain.** `vaultguard init` downloads the Inline Secret Block plugin from its GitHub
+  releases. A malicious plugin that knows your passphrase can decrypt everything — pin/verify it if
+  you care.
+
+**Use it when:** you want *"agents run things with secrets without me pasting values into the chat"*
+and the residual risks above are acceptable to you.
+
+**Don't use it when:** you need real secrets-management guarantees — rotation policy, hardware-backed
+keys, no procedure that makes plaintext reachable to a native plugin — when your threat model
+includes a hostile agent on a shared or CI machine, or when the vault itself needs encryption at rest
+(Obsidian's own vault encryption, or an encrypted volume, is the answer there).
+
+---
+
 ## FAQ
 
-**Is my vault git-safe?** The encrypted blocks are plain markdown — safe to commit, sync, or put anywhere Obsidian works. Never commit `~/.vaultguard/config.json`.
+**Is my vault git-safe?** The encrypted blocks are plain markdown — safe to commit, sync, or put anywhere Obsidian works. Since the passphrase no longer lives in `~/.vaultguard/config.json` by default, committing that file leaks your vault path and settings but not your key.
 
 **What if I forget the passphrase?** The blocks are AES-256-GCM. It cannot be recovered — that's the point.
 

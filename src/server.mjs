@@ -72,7 +72,6 @@ function commandAllowed(command, settings) {
 }
 
 async function checkApproval(label, settings) {
-  if (process.env.VAULTGUARD_NO_APPROVAL === '1') return true;
   if (!settings.requireApproval) return true;
   if (process.stdin.isTTY) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
@@ -149,6 +148,13 @@ async function handleToolsCall(params, s) {
 
     case 'get_secret': {
       const { name: secretName } = args;
+      if (!s.allowGetSecret) {
+        result = errorObject(
+          'get_secret is disabled by default so secret values never reach the agent. Enable it explicitly by adding "allowGetSecret": true to ~/.vaultguard/config.json.',
+        );
+        await audit({ tool: 'get_secret', secret: secretName, outcome: 'denied:get_secret_disabled' });
+        return result;
+      }
       if (!parsed.has(secretName)) {
         result = errorObject(`secret "${secretName}" not found. Run list_secrets to see available names.`);
         await audit({ tool: 'get_secret', secret: secretName, outcome: 'error:not_found' });
@@ -248,7 +254,8 @@ const sink = {
             return { ...ctx, error: { code: -32000, message: `host "${runtime.clientName || 'unknown'}" not allowed` } };
           }
           await audit({ tool: 'tools/list', outcome: 'ok' });
-          return { ...ctx, result: { tools: TOOLS } };
+          const visible = s.allowGetSecret ? TOOLS : TOOLS.filter((t) => t.name !== 'get_secret');
+          return { ...ctx, result: { tools: visible } };
         }
         case 'tools/call': {
           const s = await settings();
@@ -272,7 +279,7 @@ const sink = {
 async function start() {
   const s = await settings();
   process.stderr.write(
-    `vaultguard MCP server ready • vault: ${vaultLabel(s.vaultPath || '(unset)')} • approval: ${s.requireApproval ? 'required' : 'auto'} • audit: ${s.audit ? 'on' : 'off'}\n`,
+    `vaultguard MCP server ready • vault: ${vaultLabel(s.vaultPath || '(unset)')} • approval: ${s.requireApproval ? 'required' : 'auto'} • audit: ${s.audit ? 'on' : 'off'} • get_secret: ${s.allowGetSecret ? 'on' : 'off'}\n`,
   );
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   rl.on('line', async (line) => {

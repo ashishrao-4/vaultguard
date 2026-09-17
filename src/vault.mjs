@@ -1,9 +1,48 @@
-import { readFile, writeFile, access } from 'node:fs/promises';
+import { readFile, writeFile, rename, access, unlink } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { encrypt } from './crypto.mjs';
+import { encrypt, decrypt } from './crypto.mjs';
 import { secretsFilePath } from './config.mjs';
 
 export const BLOCK_RE = /^```secret-lock\s+(\S+?)\s*\n([\s\S]*?)\n```/gm;
+const BLOCK_SRC = BLOCK_RE.source;
+
+let tmpCounter = 0;
+
+async function writeAtomic(file, content) {
+  const tmp = `${file}.${process.pid}.${Date.now()}.${tmpCounter++}.tmp`;
+  try {
+    await writeFile(tmp, content, 'utf8');
+    await rename(tmp, file);
+  } catch (err) {
+    try {
+      await unlink(tmp);
+    } catch {
+      /* best effort */
+    }
+    throw err;
+  }
+}
+
+function blockFor(name, b64) {
+  return `\`\`\`secret-lock ${name}\n${b64}\n\`\`\``;
+}
+
+// Walk every block in `text`; for each, call fn(name, payload). If fn returns a
+// string that string replaces the block; if it returns null the block is kept.
+function replaceBlocks(text, fn) {
+  let out = '';
+  let last = 0;
+  let matched = 0;
+  for (const m of text.matchAll(new RegExp(BLOCK_SRC, 'gm'))) {
+    const replacement = fn(m[1], m[2]);
+    if (replacement == null) continue;
+    out += text.slice(last, m.index) + replacement;
+    last = m.index + m[0].length;
+    matched++;
+  }
+  out += text.slice(last);
+  return { out, matched };
+}
 
 export const SETUP_NOTICE =
   '# Secrets\n' +
@@ -67,22 +106,49 @@ export async function addSecret(name, value, passphrase, vaultPath) {
     throw new Error(`Secret "${name}" already exists. Remove it first, or use vaultguard set to rotate.`);
   }
   const b64 = encrypt(value, passphrase);
-  const block = `\n\`\`\`secret-lock ${name}\n${b64}\n\`\`\`\n`;
-  await writeFile(secretsFilePath(vaultPath), text + block, 'utf8');
+  const block = `\n${blockFor(name, b64)}\n`;
+  await writeAtomic(secretsFilePath(vaultPath), text + block);
   return b64;
 }
 
 export async function rotateSecret(name, value, passphrase, vaultPath) {
-  if (!parseSecrets((await readSecretsText(vaultPath)) ?? '').has(name)) {
+  const file = secretsFilePath(vaultPath);
+  const text = await readFile(file, 'utf8');
+  if (!parseSecrets(text).has(name)) {
     throw new Error(`Secret "${name}" not found.`);
   }
   const b64 = encrypt(value, passphrase);
+  const { out, matched } = replaceBlocks(text, (n) => (n === name ? blockFor(name, b64) : null));
+  if (!matched) throw new Error(`Secret "${name}" not found.`);
+  await writeAtomic(file, out);
+  return b64;
+}
+
+export async function rekey(oldPassphrase, newPassphrase, vaultPath) {
   const file = secretsFilePath(vaultPath);
   const text = await readFile(file, 'utf8');
-  const updated = text.replace(
-    new RegExp(`^(\`\`\`secret-lock\\s+${name}\\s*\n)[\\s\\S]*?(\n\`\`\`)`, 'm'),
-    `$1${b64}$2`,
-  );
-  await writeFile(file, updated, 'utf8');
-  return b64;
+  const names = [];
+  let out = '';
+  let last = 0;
+  let any = false;
+  for (const m of text.matchAll(new RegExp(BLOCK_SRC, 'gm'))) {
+    let plain;
+    try {
+      plain = decrypt(m[2], oldPassphrase);
+    } catch {
+      throw new Error(
+        `decrypt failed for "${m[1]}" with the old passphrase — nothing was changed.`,
+      );
+    }
+    out += text.slice(last, m.index) + blockFor(m[1], encrypt(plain, newPassphrase));
+    last = m.index + m[0].length;
+    names.push(m[1]);
+    any = true;
+  }
+  if (!any) {
+    throw new Error('no secrets to re-encrypt.');
+  }
+  out += text.slice(last);
+  await writeAtomic(file, out);
+  return [...new Set(names)];
 }

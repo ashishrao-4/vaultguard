@@ -1,6 +1,6 @@
 {
   "name": "@ashishrao-4/vaultguard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Your Obsidian vault, guarded for your AI agents. Agents use secrets by name via MCP — they never see the values.",
   "type": "module",
   "bin": {

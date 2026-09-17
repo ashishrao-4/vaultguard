@@ -19,24 +19,10 @@ You hand it over. Now that value lives in every transcript, log, checkpoint, and
 
 Secrets live in **your** Obsidian vault as AES-256-GCM ciphertext. Your agents get them **by name** over MCP — they run commands with the values injected into the environment and **never see them**, while every access is **audited**.
 
-```
-┌────────────────────────┐        ┌─────────────────────────────┐
-│    Obsidian vault       │        │         your agent          │
-│                        │        │   (opencode · Claude · …   │
-│  Secrets.md            │        │   Cursor)                   │
-│  │  ```secret-lock     │        │                             │
-│  │    DB_URL           │  ◀─────│  list_secrets  → names only  │
-│  │    AgH8qQc5…        │  MCP   │                             │
-│  │  ```                │        │  run_with_secret            │
-│  │                      │        │    → env: DB_URL=…          │
-│  │  encrypted blocks    │        │    → output redacted        │
-│  └──────────────────────┘        └─────────────────────────────┘
-        ▲                                    ▲
-        │  you: vaultguard add DB_URL        │  every call → audit.jsonl
-        │       (or just click "Show"        │  + allowlist/approval gates
-        │        in Obsidian!)               │
-        └────────────────────────────────────┘
-```
+<p align="center">
+  <img src="assets/architecture.png" alt="vaultguard architecture" width="640"/><br/>
+  <em>The simple version: your agent asks by name, vaultguard decrypts on demand, the value stays out of the conversation.</em>
+</p>
 
 - **You own the data.** No cloud, no SaaS, no server. The encrypted blocks are plain markdown.
 - **Readable in Obsidian.** Encrypted blocks look like notes; reveal them with one click.

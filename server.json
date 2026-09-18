@@ -1,0 +1,62 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ashishrao-4/vaultguard",
+  "title": "vaultguard",
+  "description": "AI agents use your Obsidian secrets by name — values never reach their context.",
+  "version": "0.1.2",
+  "websiteUrl": "https://github.com/ashishrao-4/vaultguard",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/ashishrao-4/vaultguard/main/assets/logo.png",
+      "mimeType": "image/png",
+      "sizes": ["128x128"]
+    }
+  ],
+  "repository": {
+    "url": "https://github.com/ashishrao-4/vaultguard",
+    "source": "github",
+    "id": "1373250704"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@ashishrao-4/vaultguard",
+      "version": "0.1.2",
+      "runtimeHint": "npx",
+      "packageArguments": [
+        { "type": "positional", "value": "mcp" },
+        { "type": "positional", "value": "start" }
+      ],
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "VAULTGUARD_PASSPHRASE",
+          "description": "Passphrase that decrypts the encrypted secret blocks in your Obsidian vault.",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "VAULTGUARD_VAULT_PATH",
+          "description": "Path to your Obsidian vault (overrides the one in ~/.vaultguard/config.json).",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "VAULTGUARD_HOME",
+          "description": "Config directory (defaults to ~/.vaultguard).",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "VAULTGUARD_ALLOW_GET_SECRET",
+          "description": "Set to 1 to enable get_secret (default: disabled so values never reach the agent).",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

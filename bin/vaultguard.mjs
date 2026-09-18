@@ -324,12 +324,19 @@ function passphraseStatus(p) {
   return 'NOT set — provide VAULTGUARD_PASSPHRASE';
 }
 
-async function cmdMcp() {
+async function cmdMcp({ positional }) {
+  const serverPath = join(__dirname, '..', 'src', 'server.mjs');
+  if (positional[0] === 'start') {
+    const { spawn } = await import('node:child_process');
+    const child = spawn(process.execPath, [serverPath], { stdio: 'inherit' });
+    child.on('exit', (code) => process.exit(code ?? 0));
+    return;
+  }
   const settings = await resolveSettings();
   const pw = settings.passphrase ? '' : '<your-passphrase>';
   print(
     'connect vaultguard to your agents',
-    mcpSnippets(join(__dirname, '..', 'src', 'server.mjs'), pw, { showEnv: !settings.passphrase }),
+    mcpSnippets(serverPath, pw, { showEnv: !settings.passphrase }),
   );
   if (!settings.vaultPath) console.log('\n  (tip: run "vaultguard init" first so the server finds your vault)');
 }
@@ -395,6 +402,7 @@ const COMMANDS = {
         '  vaultguard list\n' +
         '  vaultguard audit [--lines <n>]                # tail the audit log\n' +
         '  vaultguard mcp                               # print MCP config snippets\n' +
+        '  vaultguard mcp start                          # run as an MCP server (stdio)\n' +
         '  vaultguard info\n' +
         '  vaultguard test                              # crypto self-test\n' +
         '\n' +
